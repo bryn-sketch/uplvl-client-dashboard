@@ -240,6 +240,27 @@ function monthsActive(d){
 
 let S={clients:[],live:false,loading:false,open:new Set(),spaceId:null};
 
+const CACHE_KEY='uplvl_dashboard_cache_v1';
+const CACHE_TTL=5*60*1000; // 5 minutes
+
+function loadCache(){
+  try{
+    const raw=localStorage.getItem(CACHE_KEY);
+    if(!raw) return null;
+    const parsed=JSON.parse(raw);
+    if(!parsed||!parsed.timestamp||!Array.isArray(parsed.clients)) return null;
+    if(Date.now()-parsed.timestamp>CACHE_TTL) return null;
+    const clients=parsed.clients.map(c=>({...c,kickoffDate:c.kickoffDate?new Date(c.kickoffDate):null}));
+    return {clients,timestamp:parsed.timestamp};
+  }catch(e){ return null; }
+}
+function saveCache(clients){
+  try{
+    const serializable=clients.map(c=>({...c,kickoffDate:c.kickoffDate?c.kickoffDate.toISOString():null}));
+    localStorage.setItem(CACHE_KEY,JSON.stringify({clients:serializable,timestamp:Date.now()}));
+  }catch(e){ /* storage unavailable/full — caching is best-effort, ignore */ }
+}
+
 function sleep(ms){ return new Promise(res=>setTimeout(res,ms)); }
 
 async function cuFetch(path,attempt){
@@ -259,8 +280,18 @@ async function cuFetch(path,attempt){
 
 async function init(){
   setPill('loading','Connecting...');
+  S.spaceId=SPACE_ID;
+  const cached=loadCache();
+  if(cached){
+    S.clients=cached.clients; S.live=true; S.loading=false;
+    const stamp='Updated '+new Date(cached.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+' (cached)';
+    document.getElementById('upd-stamp').textContent=stamp;
+    document.getElementById('bot-stamp').textContent=stamp;
+    setPill('live','Live · ClickUp (cached)');
+    updateTotals(); renderList();
+    return;
+  }
   try{
-    S.spaceId=SPACE_ID;
     await loadData();
   }catch(e){
     setErr('Could not connect: '+e.message);
@@ -355,6 +386,7 @@ async function loadData(){
     }
 
     S.clients=out; S.live=true; S.loading=false;
+    saveCache(out);
 
     const stamp='Updated '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
     document.getElementById('upd-stamp').textContent=stamp;
